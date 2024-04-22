@@ -14,4 +14,4 @@ RUN ./init-chain.sh
 
 EXPOSE 8545/tcp
 
-ENTRYPOINT ["./geth.sh"]
+CMD ["./geth.sh"]

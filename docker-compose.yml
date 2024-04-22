@@ -1,0 +1,11 @@
+name: "eth-revert-test"
+
+services:
+  geth:
+    image: "eth-revert-test/geth"
+    build: "./geth"
+    ports:
+      - "127.0.0.1:8545:8545/tcp"
+  hardhat:
+    image: "eth-revert-test/hardhat"
+    build: "./hardhat"
