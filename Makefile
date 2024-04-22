@@ -1,4 +1,4 @@
-.PHONY: build up down deploy abigen
+.PHONY: build up down deploy abigen clean
 
 build:
 	docker compose build
@@ -16,3 +16,7 @@ abigen:
 	docker compose run --rm -v $$PWD/share:/mnt geth sh -c 'jq .abi < /mnt/artifacts/contracts/test.sol/C.json > C.abi && abigen --abi C.abi --pkg hoge --out hoge.go && mv hoge.go /mnt'
 	mkdir -p ./go/hoge
 	mv ./share/hoge.go ./go/hoge
+
+clean:
+	-rm -rf share
+	-rm -rf go/hoge
