@@ -16,7 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/siburu/eth-revert-test/go/hoge"
+	"github.com/siburu/eth-revert-test/go/contracts"
 )
 
 const (
@@ -28,6 +28,8 @@ const (
 	revertTypeRequire      uint8 = 0
 	revertTypeRevert             = 1
 	revertTypeCustomRevert       = 2
+	revertTypeOverflow           = 3
+	revertTypeNone               = 4
 )
 
 func parseAddress(path string) (common.Address, error) {
@@ -58,7 +60,7 @@ func main() {
 		panic(err)
 	}
 
-	h, err := hoge.NewHoge(addr, cl)
+	c, err := contracts.NewC(addr, cl)
 	if err != nil {
 		panic(err)
 	}
@@ -78,55 +80,68 @@ func main() {
 	// set GasLimit to avoid executing eth_estimateGas
 	txOpts.GasLimit = 5000000
 
+Out:
 	for _, revertType := range []uint8{
 		revertTypeRequire,
 		revertTypeRevert,
 		revertTypeCustomRevert,
+		revertTypeOverflow,
+		revertTypeNone,
+		100,
 	} {
-		tx, err := h.Test(txOpts, revertType, big.NewInt(10))
+		tx, err := c.Test(txOpts, revertType, big.NewInt(3))
 		if err != nil {
 			panic(err)
 		}
 
+	In:
 		for {
 			receipt, err := cl.TransactionReceipt(ctx, tx.Hash())
 			if err == nil {
-				if receipt.Status != types.ReceiptStatusFailed {
-					bz, err := json.MarshalIndent(receipt, "", "\t")
-					if err != nil {
-						panic(err)
-					}
-					panic(fmt.Sprintf("unexpected successful receipt: %s", string(bz)))
+				switch receipt.Status {
+				case types.ReceiptStatusSuccessful:
+					fmt.Printf("OK: RevertType=%d\n", revertType)
+					continue Out
+				case types.ReceiptStatusFailed:
+					fmt.Printf("NG: RevertType=%d\n", revertType)
+					break In
+				default:
+					panic(fmt.Sprintf("unexpected receipt status: %d", receipt.Status))
 				}
-				break
-			} else if err != ethereum.NotFound {
+			} else if err == ethereum.NotFound {
+				time.Sleep(time.Second)
+			} else {
 				panic(err)
 			}
-
-			time.Sleep(time.Second)
 		}
 
 		cf, err := traceTransaction(ctx, cl, tx.Hash())
 		if err != nil {
 			panic(err)
 		}
+		fmt.Printf("cf: output=%x, error=%s, revertReason=%s\n", cf.Output, cf.Error, cf.RevertReason)
 
 		if revertReason, err := abi.UnpackRevert(cf.Output); err == nil {
 			fmt.Printf("parsed revert reason: %s\n", revertReason)
-			fmt.Printf("RevertReason: %s\n", cf.RevertReason)
-		} else if abi, err := hoge.HogeMetaData.GetAbi(); err != nil {
+		} else if abi, err := contracts.CMetaData.GetAbi(); err != nil {
 			panic(err)
 		} else {
-			for _, errABI := range abi.Errors {
+			for errName, errABI := range abi.Errors {
 				if v, err := errABI.Unpack(cf.Output); err == nil {
 					vmap := make(map[int]interface{})
 					for i, v := range v.([]interface{}) {
 						vmap[i] = v
 					}
-					fmt.Printf("parsed error: %v\n", vmap)
-					break
+					fmt.Printf("parsed custom error: name=%s, values=%v\n", errName, vmap)
+					continue Out
 				}
 			}
+
+			bzCf, err := json.MarshalIndent(cf, "", "\t")
+			if err != nil {
+				panic(err)
+			}
+			fmt.Printf("unknown error: %v\n", string(bzCf))
 		}
 	}
 }

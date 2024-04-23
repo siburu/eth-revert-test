@@ -30,7 +30,7 @@ task("deploy", "deploy contracts", async (taskArgs, hre) => {
   console.log(`target network: name=${name}, chainId=${chainId}`);
 
   let contract;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 3; i++) {
     const prev = contract;
     contract = await deploy("C");
     console.log(`contract[${i}] address: ${contract.target}`);
