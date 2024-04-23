@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/siburu/eth-revert-test/go/contracts"
 )
 
@@ -45,6 +46,41 @@ func parseAddress(path string) (common.Address, error) {
 	}
 
 	return common.HexToAddress(string(bz)), nil
+}
+
+func parseError(errorData []byte) (string, error) {
+	if revertReason, err := abi.UnpackRevert(errorData); err == nil {
+		return fmt.Sprintf("traditional revert: %s", revertReason), nil
+	}
+
+	abi, err := contracts.CMetaData.GetAbi()
+	if err != nil {
+		return "", fmt.Errorf("failed to parse ABI: %v", err)
+	}
+
+	for errName, errABI := range abi.Errors {
+		if v, err := errABI.Unpack(errorData); err == nil {
+			s, err := errorToJSON(v, errABI)
+			if err != nil {
+				return "", fmt.Errorf("failed to convert error into JSON string: %v", err)
+			}
+			return fmt.Sprintf("custom error: name=%s, inputs=%s", errName, s), nil
+		}
+	}
+
+	return "", fmt.Errorf("unparseable error data")
+}
+
+func errorToJSON(errVal interface{}, errABI abi.Error) (string, error) {
+	m := make(map[string]interface{})
+	for i, v := range errVal.([]interface{}) {
+		m[errABI.Inputs[i].Name] = v
+	}
+	bz, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(bz), nil
 }
 
 func main() {
@@ -91,7 +127,22 @@ Out:
 	} {
 		tx, err := c.Test(txOpts, revertType, big.NewInt(3))
 		if err != nil {
-			panic(err)
+			de, ok := err.(rpc.DataError)
+			if ok {
+				errorData := de.ErrorData()
+				if errorData != nil {
+					e, err := parseError(common.FromHex(errorData.(string)))
+					if err != nil {
+						panic(err)
+					}
+					fmt.Printf("DataError: parsed=%s\n", e)
+				} else {
+					fmt.Printf("DataError: unparsed=%s\n", de.Error())
+				}
+			} else {
+				fmt.Printf("not DataError: value=%v, type=%T\n", err, err)
+			}
+			continue Out
 		}
 
 	In:
@@ -121,27 +172,11 @@ Out:
 		}
 		fmt.Printf("cf: output=%x, error=%s, revertReason=%s\n", cf.Output, cf.Error, cf.RevertReason)
 
-		if revertReason, err := abi.UnpackRevert(cf.Output); err == nil {
-			fmt.Printf("parsed revert reason: %s\n", revertReason)
-		} else if abi, err := contracts.CMetaData.GetAbi(); err != nil {
-			panic(err)
+		e, err := parseError(cf.Output)
+		if err != nil {
+			fmt.Printf("failed to parse: %v\n", err)
 		} else {
-			for errName, errABI := range abi.Errors {
-				if v, err := errABI.Unpack(cf.Output); err == nil {
-					vmap := make(map[int]interface{})
-					for i, v := range v.([]interface{}) {
-						vmap[i] = v
-					}
-					fmt.Printf("parsed custom error: name=%s, values=%v\n", errName, vmap)
-					continue Out
-				}
-			}
-
-			bzCf, err := json.MarshalIndent(cf, "", "\t")
-			if err != nil {
-				panic(err)
-			}
-			fmt.Printf("unknown error: %v\n", string(bzCf))
+			fmt.Printf("parsed error: %s\n", e)
 		}
 	}
 }
