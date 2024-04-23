@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -77,38 +78,55 @@ func main() {
 	// set GasLimit to avoid executing eth_estimateGas
 	txOpts.GasLimit = 5000000
 
-	tx, err := h.Test(txOpts, revertTypeRequire, big.NewInt(3))
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		receipt, err := cl.TransactionReceipt(ctx, tx.Hash())
-		if err == nil {
-			if receipt.Status != types.ReceiptStatusFailed {
-				bz, err := json.MarshalIndent(receipt, "", "\t")
-				if err != nil {
-					panic(err)
-				}
-				panic(fmt.Sprintf("unexpected successful receipt: %s", string(bz)))
-			}
-			break
-		} else if err != ethereum.NotFound {
+	for _, revertType := range []uint8{
+		revertTypeRequire,
+		revertTypeRevert,
+		revertTypeCustomRevert,
+	} {
+		tx, err := h.Test(txOpts, revertType, big.NewInt(10))
+		if err != nil {
 			panic(err)
 		}
 
-		fmt.Println("Will sleep for 1 sec and then retry")
-		time.Sleep(time.Second)
-	}
+		for {
+			receipt, err := cl.TransactionReceipt(ctx, tx.Hash())
+			if err == nil {
+				if receipt.Status != types.ReceiptStatusFailed {
+					bz, err := json.MarshalIndent(receipt, "", "\t")
+					if err != nil {
+						panic(err)
+					}
+					panic(fmt.Sprintf("unexpected successful receipt: %s", string(bz)))
+				}
+				break
+			} else if err != ethereum.NotFound {
+				panic(err)
+			}
 
-	cf, err := traceTransaction(ctx, cl, tx.Hash())
-	if err != nil {
-		panic(err)
-	}
+			time.Sleep(time.Second)
+		}
 
-	bzCf, err := json.MarshalIndent(cf, "", "\t")
-	if err != nil {
-		panic(err)
+		cf, err := traceTransaction(ctx, cl, tx.Hash())
+		if err != nil {
+			panic(err)
+		}
+
+		if revertReason, err := abi.UnpackRevert(cf.Output); err == nil {
+			fmt.Printf("parsed revert reason: %s\n", revertReason)
+			fmt.Printf("RevertReason: %s\n", cf.RevertReason)
+		} else if abi, err := hoge.HogeMetaData.GetAbi(); err != nil {
+			panic(err)
+		} else {
+			for _, errABI := range abi.Errors {
+				if v, err := errABI.Unpack(cf.Output); err == nil {
+					vmap := make(map[int]interface{})
+					for i, v := range v.([]interface{}) {
+						vmap[i] = v
+					}
+					fmt.Printf("parsed error: %v\n", vmap)
+					break
+				}
+			}
+		}
 	}
-	fmt.Println(string(bzCf))
 }
